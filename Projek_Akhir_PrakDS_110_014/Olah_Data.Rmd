@@ -1,0 +1,262 @@
+---
+title: "Proyek Akhir Praktikum Data Science 110, 014"
+author: "Muhammad Iqbal Habil"
+date: "2022-11-28"
+output: html_document
+---
+
+```{r}
+library(tidytext)
+library(twitteR) #akses twitter APIs
+library(rtweet) #collect and organize twitter data
+library(tm) #data cleaning (corpus)
+library(here) #menyimpan dataset
+library(syuzhet) ##untuk membaca fungsi get_nrc (ekstrak sentimen dari twitter)
+library(vroom) #load dataset
+library(RTextTools) #untuk naive bayes
+library(wordcloud) #wordcloud
+library(dplyr) #manipulasi data frame
+library(ggplot2) #visualisasi data (barplot, grafik)
+library(RColorBrewer) #pengaturan warna
+library(shiny) #shiny
+library(devtools)
+```
+
+#Score Komentar
+```{r}
+try_clean <- read.csv('tweet_tanggapan_wayang.csv')
+View(try_clean)
+
+#skoring
+kata.positif <- scan("positive-words.txt",what="character",comment.char=";")
+kata.negatif <- scan("negative-words.txt",what="character",comment.char=";")
+score.sentiment = function(sentence, positif, negatif,
+                           .progress='none')
+{
+  require(plyr)
+  require(stringr)
+  scores = laply(sentence, function(kalimat, positif,
+                                    negatif) {
+    kalimat = gsub('[[:punct:]]', '', kalimat)
+    kalimat = gsub('[[:cntrl:]]', '', kalimat)
+    kalimat = gsub('\\d+', '', kalimat)
+    kalimat = tolower(kalimat)
+    list.kata = str_split(kalimat, '\\s+')
+    kata2 = unlist(list.kata)
+    positif.matches = match(kata2, kata.positif)
+    negatif.matches = match(kata2, kata.negatif)
+    positif.matches = !is.na(positif.matches)
+    negatif.matches = !is.na(negatif.matches)
+    score = sum(positif.matches) - (sum(negatif.matches))
+    return(score)
+  }, kata.positif, kata.negatif, .progress=.progress )
+  
+  scores.df = data.frame(score=scores, text=sentence)
+  return(scores.df)}
+
+hasil = score.sentiment(try_clean$text, kata.positif, kata.negatif)
+
+#konversi score ke sentiment
+hasil$klasifikasi<- ifelse(hasil$score<0, "Negatif",ifelse(hasil$score==0,"Netral","Positif"))
+hasil$klasifikasi
+View(hasil)
+
+#menukar urtan baris
+data <- hasil[c(3,1,2)] #ubah urutan kolom
+View(data)
+write.csv(data, file = "tweetwayangJadi.csv")
+```
+
+#Barplot Data
+```{r}
+library(e1071) #library yang terdapat sebuah algoritma naivebayes
+library(caret) #library yang terdapat sebuah algoritma naivebayes
+
+d<-read.csv("tweet_tanggapan_wayang.csv",stringsAsFactors = FALSE) #membaca file csv yang sudah di cleaning data
+
+review <-as.character(d$text) #set variabel cloumn text menjadi char
+
+#deklarasi var s utnuk memanggil sentimen dictionary untuk menghitung presentasi dari beberapa emotion dan mengubahnya ke dalam text file
+s <- get_nrc_sentiment(review, cl = NULL, language = "english", lowercase = TRUE)
+
+review_combine<-cbind(d$text,s) #klasifikasi data
+par(mar=rep(3,4))
+a<- barplot(colSums(s),col=rainbow(10), xlab ='Tingkat Emosional', ylab='Jumlah',main='Barplot Sentimen Analisis Kesenian Wayang')
+barplt <- a
+```
+
+#Naive Bayes
+```{r}
+require(corpus)
+
+data.frame <- read.csv("tweetwayangJadi.csv",stringsAsFactors = F)
+data.frame$klasifikasi <- factor(data.frame$klasifikasi)
+glimpse(data.frame)
+set.seed(20)
+data.frame<-data.frame[sample(nrow(data.frame)),]
+data.frame<-data.frame[sample(nrow(data.frame)),]
+glimpse(data.frame)
+corpus<-Corpus(VectorSource(data.frame$text))
+corpus
+inspect(corpus[1:10])
+
+#fungsinya untuk membersihkan data data yang tidak dibutuhkan 
+
+corpus.clean<-corpus %>%
+  tm_map(content_transformer(tolower)) %>% #digunakan untuk mengubah huruf besar dari string menjadi string huruf kecil
+  tm_map(removePunctuation)%>% #menghapus tanda baca
+  tm_map(removeNumbers)%>% #menghapus nomor
+  tm_map(removeWords,stopwords(kind="en"))%>% #menghapus stopwords
+  tm_map(stripWhitespace) 
+dtm<-DocumentTermMatrix(corpus.clean)
+inspect(dtm[1:10, 1:20])
+
+df.train<-data.frame[1:50,,]
+df.test<-data.frame[51:100,]   
+
+dtm.train<-dtm[1:50,]
+dtm.test<-dtm[51:100,]
+
+corpus.clean.train<-corpus.clean[1:50]
+corpus.clean.test<-corpus.clean[51:100]
+
+dim(dtm.train)
+
+fivefreq<-findFreqTerms(dtm.train,5)
+length(fivefreq)
+
+dtm.train.nb<-DocumentTermMatrix(corpus.clean.train,control = list(dictionary=fivefreq))
+dim(dtm.train.nb)
+
+dtm.test.nb<-DocumentTermMatrix(corpus.clean.test,control = list(dictionary=fivefreq))
+dim(dtm.test.nb)
+
+#Boolan Naive Bayes
+convert_count <- function(x){
+    y<-ifelse(x>0,1,0)
+    y<-factor(y,levels=c(0,1),labels=c("no","yes"))
+    y
+}
+
+#Naive Bayes Model
+trainNB<-apply(dtm.train.nb,2,convert_count)
+testNB<-apply(dtm.test.nb,2,convert_count)
+```
+
+#Akurasi Data
+```{r}
+classifier <- naiveBayes(trainNB, df.train$klasifikasi, laplace = -1)
+
+#Use the NB classifier we built to make predictions on the test set
+pred <- predict(classifier, testNB)
+
+#Create a truth table by tabulating the predicted class labels with the actual predicted class labels with the actual class labels
+NB_table=table("Prediction"= pred, "Actual" = df.test$klasifikasi)
+NB_table
+
+#confussion Matrix
+conf.matNB <- confusionMatrix(pred, df.test$klasifikasi)
+conf.matNB
+```
+
+#Worclouds Data
+```{r}
+library(dplyr)
+library(wordcloud2)
+
+layout(matrix(c(1, 2), nrow=2), heights=c(1, 4))
+par(mar=rep(0, 4))
+plot.new()
+text(x=0.5, y=0.5, cex=1.5, "Word Cloud Kesenian Wayang")
+wordcloud(corpus.clean,max.words = 100,random.order=F,colors=brewer.pal(8,"Dark2"))
+```
+
+#Histogram Modus Kata
+```{r Freq}
+  data1 = read.csv("tweet_tanggapan_wayang.csv")
+  corpus = Corpus(VectorSource(data1$text))
+      corpus <- tm_map(corpus, removeWords,"nya")
+      corpus <- tm_map(corpus, removeWords,"aja")
+      corpus <- tm_map(corpus, removeWords,"gak")
+      corpus <- tm_map(corpus, removeWords,"ðÿ")
+      corpus <- tm_map(corpus, removeWords,"amp")
+      corpus <- tm_map(corpus, removeWords,"ari")
+      corpus <- tm_map(corpus, removeWords,"seniri")
+      corpus <- tm_map(corpus, removeWords,"iselasela")
+  dtm <- TermDocumentMatrix(corpus)
+  m <- as.matrix(dtm)
+  v <- sort(rowSums(m),decreasing=TRUE)
+  d <- data.frame(word = names(v),freq=v)
+  barplot(d[1:20,]$freq, las = 2, names.arg = d[1:20,]$word, col=rainbow(5),
+        main = "Modus Kata", ylab = "Frekuensi")
+```
+
+#User Interface Shiny
+```{r}
+#shiny
+#membuka file csv
+dataLabel<- read.csv("tweetwayangJadi.csv")
+dataKotor <- read.csv("tweet_tanggapan_wayang.csv")
+
+#mengatur tampilan web
+ui <- fluidPage(
+   titlePanel("Analisis Sentimen Kesenian Wayang"), #judul
+    # Show a plot of the generated distribution
+   mainPanel(#tab
+    #plot output : untuk scatterplot
+            tabsetPanel(type = "tabs",
+                         tabPanel("Accuracy, Matrix, and Statistic", verbatimTextOutput("result")),
+                        #tab data kotor dan hasil sentiment
+                        tabPanel("Data Twitter", DT::dataTableOutput('tbl1')),
+                        tabPanel("Skor Komentar", DT::dataTableOutput('tbl2')),
+                        #tab scatterplot/grafik
+                        tabPanel("Barplot", plotOutput("barplot")), 
+                        tabPanel("Diagram Frekuensi", plotOutput("freqplot")), 
+                        # tab wordcloud
+                        tabPanel("Wordcloud", plotOutput("Wordcloud"))
+            )
+   )
+    
+)
+```
+
+#Server Run Program
+```{r global}
+#tempat data akan dianalisis dan diproses, hasilnya ditampilkan/diplotkan pada bagian mainpanel() ui
+server <- function(input, output) {
+  #output Data
+  output$result <-renderPrint({
+      conf.matNB
+  })
+  #data ditampilkan dalam beberapa halaman
+  output$tbl1 = DT::renderDataTable({
+        DT::datatable(dataKotor, options = list(lengthChange = FALSE))
+  })
+
+  output$tbl2 = DT::renderDataTable({
+        DT::datatable(dataLabel, options = list(lengthChange = FALSE))
+  })
+  
+  #barplot
+  output$barplot <- renderPlot({
+    barplot(colSums(s), col=rainbow(10), xlab ='Tingkat Emosional', ylab='Jumlah',main='Barplot Sentimen Analisis Kesenian Wayang')
+  }, height = 400)
+  
+  #freq Plot
+  output$freqplot <- renderPlot({
+    barplot(d[1:20,]$freq, las = 2, names.arg = d[1:20,]$word, col=rainbow(5),
+        main = "Modus Kata", ylab = "Frekuensi")
+  }, height = 400)
+  
+  #wordcloud
+  output$Wordcloud <- renderPlot({
+    layout(matrix(c(1, 2), nrow=2), heights=c(1, 4))
+    par(mar=rep(0, 4))
+    plot.new()
+    wordcloud(corpus.clean,max.words = 100,random.order=F,colors=brewer.pal(8,"Dark2"))
+  })
+}
+shinyApp(ui = ui, server = server)
+```
+
+

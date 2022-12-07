@@ -1,0 +1,79 @@
+---
+title: "Proyek Data Science(Scrapping Data)"
+author: "Muhammad Iqbal Habil"
+date: "2022-11-20"
+output: html_document
+---
+
+```{r}
+library(rtweet)
+library(dplyr)
+library(dplyr)
+library(tidyr)
+library(tidytext)
+library(textdata)
+library(purrr)
+library(tm)
+library(here)
+```
+#memanggil consumer_key, access_token, dan acces_secret dari twitter
+```{r}
+app = "Kaymind" 
+consumer_key = "bwGStMpr8cQgwnC35DcoAmc67" 
+consumer_secret = "s2MKPJv7Jt2VcRoEpNduxJ11FgRD0c1HAREd5lzzhWFNC4zbKf" 
+access_token="997398565876977664-L2FUv7hKT7jcI71OL09BUkt8S62373W" 
+access_secret = "P0FKHQvoP3x5u8TsU14mFSHHHJyrSrfpjbxSS9Sa1asMh"
+
+twitter_token <- create_token(
+  app = appname,
+  consumer_key = consumer_key,
+  consumer_secret = consumer_secret,
+  access_token = access_token,
+  access_secret =access_secret)
+```
+#memanggil topik dari twitter dan cleansing untuk kemudian di save dalam bentuk csv
+```{r}
+auth_setup_default()
+rstats_tweets <- search_tweets(token = twitter_token,
+                               q = "wayang OR wayangkulit -filter:retweets",
+                               n = 1100,
+                               type = "recent",
+                               lang="id")
+data_fix <- rstats_tweets %>%
+              # Remove Duplicate/menghapus yang sama isi tweetnya
+              distinct(text, .keep_all = T) %>%
+              # Take The Text Only
+              select(created_at, text)
+
+data_fix["id"] <- 1:nrow(data_fix)
+
+data_fix$created_at <- as.Date(data_fix$created_at, format = "%Y-%m-%d")
+
+rstats_tweets2 <- data_fix$text
+travel_corpus <- Corpus(VectorSource(rstats_tweets2))
+
+tweet_clean <- tm_map(travel_corpus, removePunctuation) #menghilangkan tandabaca
+tweet_clean <- tm_map(tweet_clean, content_transformer(tolower)) #menghilangkan kapital
+tweet_clean <- tm_map(tweet_clean, removeNumbers) #menghilangkan angka
+tweet_clean <- tm_map(tweet_clean, stripWhitespace) #menghilangkan white space
+removeMentions <- function(removeMentions) gsub("@\\w+", "", removeMentions)
+tweet_clean <- tm_map(tweet_clean, removeMentions)
+removeURL <- function(removeURL) gsub("http.*", "", removeURL)
+tweet_clean <- tm_map(tweet_clean, removeURL) #menghilangkan url
+removeEmoticon <- function(removeEmoticon) gsub("[^\x01-\x7F]", "", removeEmoticon)
+tweet_clean <- tm_map(tweet_clean, removeEmoticon) #menghilangkan emoticon
+
+stopwords <- scan(paste(getwd(), "/stopwords.txt", sep=""), character(), sep="\n")
+tweet_clean <- tm_map(tweet_clean,removeWords,stopwords) #menghilangkan stopwords
+
+
+tweet_clean_df<-data.frame(text=unlist(sapply(tweet_clean, `[`)), stringsAsFactors=F)
+#melihat hasil
+View(tweet_clean_df)
+
+write.csv(tweet_clean_df,file = 'tweet_tanggapan_wayang.csv')
+```
+
+
+
+
